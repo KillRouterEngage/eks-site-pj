@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: azure-pod
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: webserver
+  template:
+    metadata:
+      labels:
+        app: webserver
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+      - name: server
+        image: tlhsenai/siteprojhttp:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        env:
+        - name: PORT
+          value: "80"
+      - name: zabbix-agent
+        image: zabbix/zabbix-agent:latest
+        env:
+        - name: ZBX_SERVER_HOST
+          value: "192.168.1.249" # IP privado do servidor Zabbix
+        - name: ZBX_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webserver
+  namespace: default
+spec:
+  selector:
+    app: webserver
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  type: LoadBalancer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: azureissuer
+  namespace: default
+spec:
+  acme:
+    # The ACME server URL
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Email address used for ACME registration
+    email: default@default.com
+    # Name of a secret used to store the ACME account private key
+    privateKeySecretRef:
+      name: azureissuer
+    # Enable the HTTP-01 challenge provider
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: azurecert
+  namespace: default
+spec:
+  secretName: default
+  issuerRef:
+    name: azureissuer
+    kind: ClusterIssuer
+  commonName: mesa1.ctiturbo.com.br
+  dnsNames:
+  - mesa1.ctiturbo.com.br
+  - "*.mesa1.ctiturbo.com.br"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: azureissuer
+    kubernetes.io/ingress.class: nginx
+  name: webserver-ingress
+  namespace: default
+spec:
+  rules:
+  - host: mesa1.ctiturbo.com.br
+    http:
+      paths:
+      - backend:
+          service:
+            name: webserver
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  - host: "*.mesa1.ctiturbo.com.br"
+    http:
+      paths:
+      - backend:
+          service:
+            name: webserver
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+  tls:
+  - hosts:
+    - mesa1.ctiturbo.com.br
+    - "*.mesa1.ctiturbo.com.br"
+    secretName: default
+---
